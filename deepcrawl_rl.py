@@ -30,8 +30,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument('-mn', '--model-name', help="The name of the model", default="")
 parser.add_argument('-et', '--embedding-type', help="The type of the embedding module you want to use", default="transformer")
-parser.add_argument('-gn', '--game-name', help="The name of the environment", default="envs/DeepCrawl-relational-trans-map")
-parser.add_argument('-ne', '--num-episodes', help="Specify the number of episodes after which the environment is restarted", default=3000)
+parser.add_argument('-ne', '--num-episodes', help="Specify the number of episodes after which the environment is restarted", default=None)
 parser.add_argument('-wk', '--worker-id', help="The id for the worker", default=0)
 
 parser.add_argument('-mt', '--num-timesteps', help="Max timesteps of the agent", default=100)
@@ -47,16 +46,22 @@ args = parser.parse_args()
 '''Algorithm Parameters'''
 '''--------------------'''
 
-# Import net structures
-from net_structures.net_structures import net_transformer_map_scattered as net
-from net_structures.net_structures import baseline_transformer_map_scattered as baseline
+# Import net structures and game name based on the embedding type
+if args.embedding_type is 'dense_embedding':
+    from net_structures.net_structures import dense_embedding_net as net
+    from net_structures.net_structures import dense_embedding_baseline as baseline
 
+    args.game_name = 'envs/DeepCrawl-Dense-Embedding'
+elif args.embedding_type is 'transformer':
+    from net_structures.net_structures import transformer_net as net
+    from net_structures.net_structures import transformer_baseline as baseline
 
-# Create agent based on embedding mode
-agent = create_agents(net, baseline, args, mode=args.embedding_type)
+    args.game_name = 'envs/DeepCrawl-Transformer'
 
+# Create agent and state spec based on embedding mode
+agent, states_spec = create_agents(net, baseline, args, embedding_type=args.embedding_type)
 
-# Work ID of the environment. To use the unity editor, the ID must be 0. To use more environments in parallel, use
+# Work ID of the environment. To use more environments in parallel, use
 # different ids
 work_id = int(args.worker_id)
 
@@ -123,29 +128,13 @@ if model_name == "" or model_name == " " or model_name == None:
             "std_entropies": list(),
         }
 
-# TODO: check this things
-# print('')
-# print('--------------')
-# print('Agent stats: ')
-# print('Optimizer: ' + str(agent.optimizer['optimizer']['optimizer']))
-# print('Baseline: ' + str(agent.baseline_optimizer['optimizer']))
-# print('Discount: ' + str(agent.discount))
-# print('Update mode: ' + str(agent.update_mode))
-# print('Work id ' + str(work_id))
-# print("Game name: " + str(game_name))
-# print('--------------')
-# print('Net config: ' + str(agent.network))
-# print('--------------')
-# print('')
-
 start_time = time.time()
 
 environment = None
 
 # Callback function printing episode statistics
 def episode_finished(r, c, episode = 100):
-    # TODO: check this
-    #print('Reward @ episode {}: {}'.format(len(r.history['episode_rewards']), np.mean(r.history['episode_rewards'][-1:])))
+    # Print agent statistics every 100 episodes
     if(len(r.history['episode_rewards']) % episode == 0):
         print('Average cumulative reward for ' + str(episode) + ' episodes @ episode ' + str(len(r.history['episode_rewards'])) + ': ' + str(np.mean(r.history['episode_rewards'][-episode:])))
         print('The agent made ' + str(sum(r.history['episode_timesteps'])) + ' steps so far')
@@ -158,7 +147,6 @@ def episode_finished(r, c, episode = 100):
     else:
         save = num_episodes
 
-    # TODO: check this part
     if(len(r.history['episode_rewards']) % save == 0):
       save_model(r)
 
@@ -203,10 +191,10 @@ try:
         environment = UnityEnvWrapper(game_name, no_graphics=True, seed=int(time.time()),
                                           worker_id=work_id, with_stats=args.with_stats, size_stats=17,
                                           size_global=10, agent_separate=False, with_class=False, with_hp=False,
-                                          with_previous=lstm, verbose=False, manual_input=False)
+                                          with_previous=lstm, verbose=False, manual_input=False,
+                                          embedding_type=args.embedding_type)
 
-        environment.set_states(agent.states_spec)
-
+        environment.set_states(states_spec)
 
         # Create the runner to run the algorithm
         runner = DeepCrawlRunner(agent=agent, max_episode_timesteps=args.num_timesteps, environment=environment,
@@ -236,12 +224,5 @@ finally:
 
     # Close the runner
     runner.close()
-
-    # Freeze the TensorFlow graph and save .bytes file. All the output layers to fetch must be specified
-    # if lstm:
-    #     # export_pb('./saved/' + saveName, 'ppo/actions-and-internals/categorical/sample/Select,ppo/actions-and-internals/layered-network/apply/internal_lstm0/apply/stack')
-    #     export_pb('./saved/' + saveName, 'agent.act/action-output')
-    # else:
-    #     export_pb('./saved/' + saveName, 'agent.act/action-output')
 
     print("Model saved with name " + saveName)

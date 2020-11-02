@@ -15,7 +15,7 @@ eps = 1e-10
 class UnityEnvWrapper(Environment):
     def __init__(self, game_name = None, no_graphics = True, seed = None, worker_id=0, size_global = 8, size_two = 5, with_local = True, size_three = 3, with_stats=True, size_stats = 1,
                  with_previous=True, manual_input = False, config = None, curriculum = None, verbose = False, agent_separate = False, agent_stats = 6,
-                 with_class=False, with_hp = False, size_class = 3, double_agent = False):
+                 with_class=False, with_hp = False, size_class = 3, double_agent = False, embedding_type='dense_embedding'):
 
         self.probabilities = []
         self.size_global = size_global
@@ -41,258 +41,190 @@ class UnityEnvWrapper(Environment):
         self.worker_id = worker_id
         self.unity_env = self.open_unity_environment(game_name, no_graphics, seed, worker_id)
         self.default_brain = self.unity_env.brain_names[0]
-        self.input_channels = 1
+        self.input_channels = 6
         super(UnityEnvWrapper, self).__init__()
         self._max_episode_timesteps = 100
 
         self.one_hot = False
 
-        self.with_transformer = True
+        if embedding_type is 'dense_embedding':
+            self.get_input_observation = self.get_input_observation_dense
+            self.print_observation = self.print_observation_dense
+        elif embedding_type is 'transformer':
+            self.get_input_observation = self.get_input_observation_transformer
+            self.print_observation = self.print_observation_transformer
+            self.with_transformer = True
 
     count = 0
 
     def to_one_hot(self, a, channels):
         return (np.arange(channels) == a[..., None]).astype(float)
 
-    def get_input_observation(self, env_info, action = None):
-        size = self.size_global * self.size_global
+    # This method change the vetorial state output by the game and transform it in
+    # state_spec form for the Transformer
+    def get_input_observation_transformer(self, env_info, action = None):
+        global_size = self.size_global * self.size_global
 
-        global_in = env_info.vector_observations[0][:size]
+        # Get the global view of cell type
+        global_in = env_info.vector_observations[0][:global_size]
         global_in = np.reshape(global_in, (self.size_global, self.size_global))
-        #global_in = np.flip(np.transpose(np.reshape(global_in, (self.size_global, self.size_global))), 0)
 
-        if self.with_local:
-            local_in = env_info.vector_observations[0][size:(size + (self.size_two * self.size_two))]
-            local_in = np.reshape(local_in, (self.size_two, self.size_two))
-            #local_in = np.flip(np.transpose(np.reshape(local_in, (self.size_two, self.size_two))), 0)
+        # Get the local view of cell type
+        local_size = self.size_two * self.size_two
+        local_in = env_info.vector_observations[0][global_size:(global_size + (local_size))]
+        local_in = np.reshape(local_in, (self.size_two, self.size_two))
 
-            local_in_two = env_info.vector_observations[0][(size + (self.size_two * self.size_two)):(
-                    size + (self.size_two * self.size_two) + (self.size_three * self.size_three))]
-            local_in_two = np.reshape(local_in_two, (self.size_three, self.size_three))
-            #local_in_two = np.flip(np.transpose(np.reshape(local_in_two, (self.size_three, self.size_three))), 0)
+        # Get the local_two view of cell type
+        local_two_size = self.size_three * self.size_three
+        local_in_two = env_info.vector_observations[0][(global_size + (local_size)):(
+                global_size + (local_size) + (local_two_size))]
+        local_in_two = np.reshape(local_in_two, (self.size_three, self.size_three))
 
-        if self.with_local and self.with_stats:
-            stats = env_info.vector_observations[0][
-                    (size + (self.size_two * self.size_two) + (self.size_three * self.size_three)):
-                    (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + self.size_stats)]
+        stats = env_info.vector_observations[0][
+                (global_size + (local_size) + (local_two_size)):
+                (global_size + local_size + local_two_size + self.size_stats)]
 
-        if self.with_local and self.with_stats and self.with_transformer:
-            agent_size = (1, 0)
-            agent = env_info.vector_observations[0][
-                    (size + (self.size_two * self.size_two) + (self.size_three * self.size_three)):
-                    (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + agent_size[0]*agent_size[1])]
-            agent = np.reshape(agent, agent_size)
+        agent_spec = (1, 0)
+        agent_size = agent_spec[0] * agent_spec[1]
+        target_spec = (1, 0)
+        target_size = target_spec[0] * target_spec[1]
+        
+        current_index = global_size + local_size + local_two_size + self.size_stats
 
-            target_size = (1, 0)
-            target = env_info.vector_observations[0][
-                    (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + agent_size[0]*agent_size[1]):
-                    (size + (self.size_two * self.size_two) + (
-                                self.size_three * self.size_three) + agent_size[0]*agent_size[1] + target_size[0]*target_size[1])]
-            target = np.reshape(target, target_size)
+        # Get the melee loot spec
+        melee_spec = (20,44)
+        melee_size = melee_spec[0] * melee_spec[1]
+        melee_weapons = env_info.vector_observations[0][
+                (current_index +
+                 agent_size + target_size):
+                (current_index +
+                 agent_size + target_size + melee_size)]
+        melee_weapons = np.reshape(melee_weapons, melee_spec)
 
+        # Get the ranged loot spec
+        range_spec = (20, 44)
+        range_size = range_spec[0] * range_spec[1]
+        range_weapons = env_info.vector_observations[0][
+                      (current_index +
+                       agent_size + target_size +melee_size):
+                      (current_index +
+                       agent_size + target_size +melee_size +
+                       range_size)]
+        range_weapons = np.reshape(range_weapons, range_spec)
 
-            melee_size = (20,44)
-            melee_weapons = env_info.vector_observations[0][
-                    (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + self.size_stats +
-                     agent_size[0] * agent_size[1] + target_size[0] * target_size[1]):
-                    (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + self.size_stats +
-                     agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] * melee_size[1])]
-            melee_weapons = np.reshape(melee_weapons, melee_size)
+        # Get the potions loot spec
+        potions_spec = (20, 44)
+        potions_size = potions_spec[0] * potions_spec[1]
+        potions = env_info.vector_observations[0][
+                          (current_index +
+                           agent_size + target_size + melee_size +
+                           range_size):
+                          (current_index +
+                           agent_size + target_size + melee_size +
+                           range_size + potions_size)]
+        potions = np.reshape(potions, potions_spec)
 
+        # Get the global and relative position of loot objects
+        total_entities = melee_spec[0] + range_spec[0] + potions_spec[0]
+        global_positions = env_info.vector_observations[0][(current_index +
+                           agent_size + target_size + melee_size +
+                           range_size + potions_size): (current_index +
+                           agent_size + target_size + melee_size +
+                           range_size + potions_size) + total_entities]
 
-            # items_size = (100,44)
-            # items = env_info.vector_observations[0][
-            #         (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + self.size_stats + agent_size[0]*agent_size[1] + target_size[0]*target_size[1]):
-            #         (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + self.size_stats + agent_size[0]*agent_size[1] + target_size[0]*target_size[1] + items_size[0]*items_size[1])]
-            # items = np.reshape(items, items_size)
+        local_positions = env_info.vector_observations[0][(current_index +
+                           agent_size + target_size + melee_size +
+                           range_size + potions_size) + total_entities: (current_index +
+                           agent_size + target_size + melee_size +
+                           range_size + potions_size) + total_entities * 2]
 
-            range_size = (20, 44)
-            range_weapons = env_info.vector_observations[0][
-                          (size + (self.size_two * self.size_two) + (
-                                      self.size_three * self.size_three) + self.size_stats +
-                           agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] * melee_size[
-                               1]):
-                          (size + (self.size_two * self.size_two) + (
-                                      self.size_three * self.size_three) + self.size_stats +
-                           agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] * melee_size[
-                               1] +
-                           range_size[0] * range_size[1])]
-            range_weapons = np.reshape(range_weapons, range_size)
+        local_two_positions = env_info.vector_observations[0][(current_index +
+                           agent_size + target_size + melee_size +
+                           range_size + potions_size) + total_entities * 2:]
 
-            # items_local_size = (25,44)
-            # items_local = env_info.vector_observations[0][
-            #           (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + self.size_stats +
-            #            agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + items_size[0] * items_size[1]):
-            #         (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + self.size_stats +
-            #          agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + items_size[0] * items_size[1] +
-            #          items_local_size[0]*items_local_size[1])]
-            # items_local = np.reshape(items_local, items_local_size)
-
-            potions_size = (20, 44)
-            potions = env_info.vector_observations[0][
-                              (size + (self.size_two * self.size_two) + (
-                                          self.size_three * self.size_three) + self.size_stats +
-                               agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] *
-                               melee_size[1] +
-                               range_size[0] * range_size[1]):
-                              (size + (self.size_two * self.size_two) + (
-                                          self.size_three * self.size_three) + self.size_stats +
-                               agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] *
-                               melee_size[1] +
-                               range_size[0] * range_size[1] + potions_size[0] *
-                               potions_size[1])]
-            potions = np.reshape(potions, potions_size)
-
-            # items_local_two_size = (9,44)
-            # items_local_two = env_info.vector_observations[0][
-            #                   (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + self.size_stats +
-            #                    agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + items_size[0] *items_size[1] +
-            #                    items_local_size[0] * items_local_size[1]):
-            #               (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + self.size_stats +
-            #                agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + items_size[0] * items_size[1] +
-            #                items_local_size[0] * items_local_size[1] + items_local_two_size[0] * items_local_two_size[1])]
-            # items_local_two = np.reshape(items_local_two, items_local_two_size)
-
-            global_positions = env_info.vector_observations[0][(size + (self.size_two * self.size_two) + (
-                                          self.size_three * self.size_three) + self.size_stats +
-                               agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] *
-                               melee_size[1] +
-                               range_size[0] * range_size[1] + potions_size[0] *
-                               potions_size[1]): (size + (self.size_two * self.size_two) + (
-                                          self.size_three * self.size_three) + self.size_stats +
-                               agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] *
-                               melee_size[1] +
-                               range_size[0] * range_size[1] + potions_size[0] *
-                               potions_size[1]) + 60]
-
-            local_positions = env_info.vector_observations[0][(size + (self.size_two * self.size_two) + (
-                                          self.size_three * self.size_three) + self.size_stats +
-                               agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] *
-                               melee_size[1] +
-                               range_size[0] * range_size[1] + potions_size[0] *
-                               potions_size[1]) + 60: (size + (self.size_two * self.size_two) + (
-                                          self.size_three * self.size_three) + self.size_stats +
-                               agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] *
-                               melee_size[1] +
-                               range_size[0] * range_size[1] + potions_size[0] *
-                               potions_size[1]) + 120]
-
-            local_two_positions = env_info.vector_observations[0][(size + (self.size_two * self.size_two) + (
-                                          self.size_three * self.size_three) + self.size_stats +
-                               agent_size[0] * agent_size[1] + target_size[0] * target_size[1] + melee_size[0] *
-                               melee_size[1] +
-                               range_size[0] * range_size[1] + potions_size[0] *
-                               potions_size[1]) + 120:]
-
-
-
-        if self.with_local and self.with_stats and self.with_hp:
-            hp = env_info.vector_observations[0][
-                 (size + (self.size_two * self.size_two) + (self.size_three * self.size_three)):
-                 (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + 4)]
-            stats = env_info.vector_observations[0][
-                    (size + (self.size_two * self.size_two) + (self.size_three * self.size_three) + 4):
-                    (size + (self.size_two * self.size_two) + (
-                                self.size_three * self.size_three) + self.size_stats + 4)]
-            self.size_stats += 4
-
-        if self.with_local and self.with_stats and self.with_class:
-            agent_class = env_info.vector_observations[0][
-                          (size + (self.size_two * self.size_two) + (
-                                      self.size_three * self.size_three) + self.size_stats):
-                          (size + (self.size_two * self.size_two) + (
-                                      self.size_three * self.size_three) + self.size_stats + self.size_class)]
-
-            enemy_class = env_info.vector_observations[0][
-                          (size + (self.size_two * self.size_two) + (
-                                      self.size_three * self.size_three) + self.size_stats + self.size_class):
-                          (size + (self.size_two * self.size_two) + (
-                                      self.size_three * self.size_three) + self.size_stats + self.size_class * 2)]
-
-        observation = {
-            'global_in': global_in,
-            'local_in': local_in
-        }
-
-        if self.with_local:
-            observation = {
-                'global_in': global_in,
-                'local_in': local_in,
-                'local_in_two': local_in_two
-            }
-        if self.with_local and self.with_stats:
-            observation = {
-                'global_in': global_in,
-                'local_in': local_in,
-                'local_in_two': local_in_two,
-                'stats': stats
-            }
-
-        if self.with_local and self.with_stats and self.with_previous:
-            action_vector = np.zeros(17)
+        action_vector = np.zeros(17)
+        if action != None:
             action_vector[action] = 1
 
-            observation = {
-                'global_in': global_in,
-                'local_in': local_in,
-                'local_in_two': local_in_two,
-                'stats': stats,
-                'action': action_vector
-            }
+        agent_stats_size = 13
+        # Create the proper multi state dict to be fed to net
+        observation = {
+            'global_in': global_in,
+            'local_in': local_in,
+            'local_in_two': local_in_two,
+            'melee_weapons': melee_weapons,
+            'range_weapons': range_weapons,
+            'potions': potions,
 
-        if self.with_local and self.with_stats and self.with_previous and self.with_class:
-            action_vector = np.zeros(17)
-            if action != None:
-                action_vector[action] = 1
+            'global_indices': global_positions,
+            'local_indices': local_positions,
+            'local_two_indices': local_two_positions,
 
-            observation = {
-                'global_in': global_in,
-                'local_in': local_in,
-                'local_in_two': local_in_two,
-                'stats': stats,
-                'agent_class': agent_class,
-                'enemy_class': enemy_class,
-                'action': action_vector
-            }
+            'agent_stats': stats[:agent_stats_size],
+            'target_stats': stats[agent_stats_size:],
+            'prev_action': action_vector
+        }
 
-        if self.with_local and self.with_stats and self.with_previous and self.with_hp:
-            action_vector = np.zeros(17)
-            if action != None:
-                action_vector[action] = 1
+        return observation
 
-            observation = {
-                'global_in': global_in,
-                'local_in': local_in,
-                'local_in_two': local_in_two,
-                'hp': hp,
-                'stats': stats,
-                'action': action_vector
-            }
+    # This method change the vetorial state output by the game and transform it in
+    # state_spec form for the DenseEmbedding
+    def get_input_observation_dense(self, env_info, action=None):
+        size = self.size_global * self.size_global * self.input_channels
 
-        if self.with_local and self.with_stats and self.with_transformer:
-            action_vector = np.zeros(17)
-            if action != None:
-                action_vector[action] = 1
+        # Get the global view of map and objects
+        global_in = env_info.vector_observations[0][:size]
+        global_in = np.reshape(global_in, (self.size_global, self.size_global, self.input_channels))
+        # Transform the categorical multi-channel map into one-hot multi-channel map
+        global_in_one_hot = self.to_one_hot(global_in[:, :, 0], 7)
+        for i in range(1, self.input_channels):
+            global_in_one_hot = np.append(global_in_one_hot, self.to_one_hot(global_in[:, :, i], 9), axis=2)
 
-            observation = {
-                'global_in': global_in,
-                'local_in': local_in,
-                'local_in_two': local_in_two,
-                'melee_weapons': melee_weapons,
-                'range_weapons': range_weapons,
-                'potions': potions,
+        # Get the local view of map and objects
+        local_size = self.size_two * self.size_two
+        local_size = local_size * self.input_channels
+        local_in = env_info.vector_observations[0][size:(size + local_size)]
+        local_in = np.reshape(local_in, (self.size_two, self.size_two, self.input_channels))
+        # Transform the categorical multi-channel map into one-hot multi-channel map
+        local_in_one_hot = self.to_one_hot(local_in[:, :, 0], 7)
+        for i in range(1, self.input_channels):
+            local_in_one_hot = np.append(local_in_one_hot, self.to_one_hot(local_in[:, :, i], 9), axis=2)
 
-                'global_indices': global_positions,
-                'local_indices': local_positions,
-                'local_two_indices': local_two_positions,
+        # Get the local_two view of map and objects
+        local_two_size = self.size_two * self.size_two
+        local_two_size = local_two_size * self.input_channels
+        local_in_two = env_info.vector_observations[0][(size + local_size):(
+                size + local_size + local_two_size)]
+        local_in_two = np.reshape(local_in_two, (self.size_three, self.size_three, self.input_channels))
+        # Transform the categorical multi-channel map into one-hot multi-channel map
+        local_in_two_one_hot = self.to_one_hot(local_in_two[:, :, 0], 7)
+        for i in range(1, self.input_channels):
+            local_in_two_one_hot = np.append(local_in_two_one_hot, self.to_one_hot(local_in_two[:, :, i], 9),
+                                             axis=2)
 
-                # 'agent': [stats[:2]],
-                # 'agent': agent,
-                # 'target': target,
-                'agent_stats': stats[:13],
-                'target_stats': stats[13:],
-                'prev_action': action_vector
-            }
+        # Get the agent and enemy stats
+        stats = env_info.vector_observations[0][
+                (size + local_size + local_two_size):
+                (size + local_size + local_two_size + self.size_stats)]
+
+        agent_stats_size = 13
+        agent_stats = stats[:agent_stats_size]
+        target_stats = stats[agent_stats_size:]
+
+        action_vector = np.zeros(17)
+        action_vector[action] = 1
+
+        observation = {
+            'global_in': global_in_one_hot,
+
+            'local_in': local_in_one_hot,
+
+            'local_in_two': local_in_two_one_hot,
+
+            'agent_stats': agent_stats,
+            'target_stats': target_stats,
+            'prev_action': action_vector
+        }
 
         return observation
 
@@ -311,8 +243,8 @@ class UnityEnvWrapper(Environment):
         env_info = None
         signal.alarm(0)
         while env_info == None:
-            #signal.signal(signal.SIGALRM, self.handler)
-            #signal.alarm(3000000000000000000)
+            signal.signal(signal.SIGALRM, self.handler)
+            signal.alarm(3000000000000000000)
             try:
                 env_info = self.unity_env.step([actions])[self.default_brain]
             except Exception as exc:
@@ -334,25 +266,10 @@ class UnityEnvWrapper(Environment):
         self.count += 1
 
         if self.verbose:
-            try:
-                print(observation)
-                print('action = ' + str(actions))
-                print('reward = ' + str(reward))
-                print(observation['global_in'])
-                print(observation['stats'])
-                print(observation['local_in'])
-                print(observation['local_in_two'])
-
-                print(len(observation['global_indices']))
-                print(observation['global_indices'])
-                print(len(observation['local_indices']))
-                print(observation['local_indices'])
-                print(len(observation['local_two_indices']))
-                print(observation['local_two_indices'])
-
-                print('timestep = ' + str(self.count))
-            except Exception as e:
-                pass
+            print('action = ' + str(actions))
+            print('reward = ' + str(reward))
+            print('timestep = ' + str(self.count))
+            self.print_observation(observation)
 
         self.timestep += 1
         if int(done) == 0 and self.timestep >= self._max_episode_timesteps:
@@ -374,8 +291,8 @@ class UnityEnvWrapper(Environment):
         env_info = None
 
         while env_info == None:
-            #signal.signal(signal.SIGALRM, self.handler)
-            #signal.alarm(10000000000000)
+            signal.signal(signal.SIGALRM, self.handler)
+            signal.alarm(10000000000000)
             try:
                 logging.getLogger("mlagents.envs").setLevel(logging.WARNING)
                 env_info = self.unity_env.reset(train_mode=True, config=self.config)[self.default_brain]
@@ -393,29 +310,42 @@ class UnityEnvWrapper(Environment):
         observation = self.get_input_observation(env_info)
 
         if self.verbose:
-            try:
-                print(len(observation['global_indices']))
-                print(observation['global_indices'])
-                print(len(observation['local_indices']))
-                print(observation['local_indices'])
-                print(len(observation['local_two_indices']))
-                print(observation['local_two_indices'])
-
-                print(observation)
-                print(observation['global_in'])
-                print(observation['local_in'])
-                print(observation['local_in_two'])
-
-                print(len(observation['global_indices']))
-                print(observation['global_indices'])
-                print(len(observation['local_indices']))
-                print(observation['local_indices'])
-                print(len(observation['local_two_indices']))
-                print(observation['local_two_indices'])
-            except Exception as e:
-                pass
+            self.print_observation(observation)
 
         return observation
+
+    def print_observation_transformer(self, observation):
+        try:
+            print(observation)
+            print(observation['global_in'])
+            print(observation['local_in'])
+            print(observation['local_in_two'])
+
+            print('')
+            print(observation['agent_stats'])
+            print(observation['target_stats'])
+
+            print('')
+            print(observation['melee_weapons'])
+            print(observation['range_weapons'])
+            print(observation['potions'])
+
+        except Exception as e:
+            pass
+
+    def print_observation_dense(self, observation):
+        try:
+            sum = observation['global_in'][:, :, 0] * 0
+            for i in range(1, self.input_channels + 1):
+                sum += observation['global_in'][:, :, i] * i
+            sum = np.flip(np.transpose(sum), 0)
+            print(sum)
+            print(' ')
+            print(observation['agent_stats'])
+            print(observation['target_stats'])
+
+        except Exception as e:
+            pass
 
     def close(self):
         self.unity_env.close()
@@ -434,7 +364,7 @@ class UnityEnvWrapper(Environment):
         return -entropy
 
     def states(self):
-        return self.states
+        return self.states_spec
 
     def actions(self):
         return {
@@ -445,8 +375,8 @@ class UnityEnvWrapper(Environment):
     def max_episode_timesteps(self):
         return 100
 
-    def set_states(self, states):
-        self.states = states
+    def set_states(self, states_spec):
+        self.states_spec = states_spec
 
 
 class Info():

@@ -1,10 +1,10 @@
 from tensorforce.agents import Agent
 
-def create_agents(net, baseline, args, mode='dense_embedding'):
+def create_agents(net, baseline, args, embedding_type='dense_embedding'):
 
     states = dict()
 
-    if mode is 'dense_embedding':
+    if embedding_type is 'dense_embedding':
         states = {
         'global_in': {'shape': (10, 10, 52), 'type': 'float'},
         'local_in': {'shape': (5, 5, 52), 'type': 'float'},
@@ -16,7 +16,7 @@ def create_agents(net, baseline, args, mode='dense_embedding'):
 
         'prev_action': {'shape': (17), 'type': 'float'}
     }
-    elif mode is 'transformer':
+    elif embedding_type is 'transformer':
         states = {
             'global_in': {'shape': (10, 10), 'num_values': 4, 'type': 'int'},
             'local_in': {'shape': (5, 5), 'num_values': 4, 'type': 'int'},
@@ -79,7 +79,6 @@ def create_agents(net, baseline, args, mode='dense_embedding'):
         ),
 
         # PPOAgent
-
         learning_rate=5e-6,
 
         subsampling_fraction=0.33,
@@ -91,4 +90,4 @@ def create_agents(net, baseline, args, mode='dense_embedding'):
         summarizer=None, recorder=None
     )
 
-    return agent
+    return agent, states
