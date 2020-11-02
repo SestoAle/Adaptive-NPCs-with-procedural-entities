@@ -1,7 +1,7 @@
 # Deep Policy Networks for NPC Behaviors that Adapt to Changing Design Parameters in Roguelike Games
 ### Prerequsites
 
-* The code was tested with **Python v3.6** on **Linux** systems.
+* The code was tested on **Linux** systems with **Python v3.6**.
 
 * To install all required packages:
     ```
