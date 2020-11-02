@@ -191,7 +191,7 @@ class UnityEnvWrapper(Environment):
             local_in_one_hot = np.append(local_in_one_hot, self.to_one_hot(local_in[:, :, i], 9), axis=2)
 
         # Get the local_two view of map and objects
-        local_two_size = self.size_two * self.size_two
+        local_two_size = self.size_three * self.size_three
         local_two_size = local_two_size * self.input_channels
         local_in_two = env_info.vector_observations[0][(size + local_size):(
                 size + local_size + local_two_size)]
