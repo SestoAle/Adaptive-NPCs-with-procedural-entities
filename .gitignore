@@ -132,3 +132,5 @@ envs/*
 arrays/*
 saved/*
 .DS_Store
+
+.idea/*
