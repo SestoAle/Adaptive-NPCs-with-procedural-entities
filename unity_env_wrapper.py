@@ -244,7 +244,7 @@ class UnityEnvWrapper(Environment):
         signal.alarm(0)
         while env_info == None:
             signal.signal(signal.SIGALRM, self.handler)
-            signal.alarm(3000000000000000000)
+            signal.alarm(3000)
             try:
                 env_info = self.unity_env.step([actions])[self.default_brain]
             except Exception as exc:
@@ -292,7 +292,7 @@ class UnityEnvWrapper(Environment):
 
         while env_info == None:
             signal.signal(signal.SIGALRM, self.handler)
-            signal.alarm(10000000000000)
+            signal.alarm(3000)
             try:
                 logging.getLogger("mlagents.envs").setLevel(logging.WARNING)
                 env_info = self.unity_env.reset(train_mode=True, config=self.config)[self.default_brain]
