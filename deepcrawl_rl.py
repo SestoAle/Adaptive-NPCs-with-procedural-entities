@@ -47,12 +47,12 @@ args = parser.parse_args()
 '''--------------------'''
 
 # Import net structures and game name based on the embedding type
-if args.embedding_type is 'dense_embedding':
+if args.embedding_type == 'dense_embedding':
     from net_structures.net_structures import dense_embedding_net as net
     from net_structures.net_structures import dense_embedding_baseline as baseline
 
     args.game_name = 'envs/DeepCrawl-Dense-Embedding'
-elif args.embedding_type is 'transformer':
+elif args.embedding_type == 'transformer':
     from net_structures.net_structures import transformer_net as net
     from net_structures.net_structures import transformer_baseline as baseline
 

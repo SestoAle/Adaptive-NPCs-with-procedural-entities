@@ -4,7 +4,7 @@ def create_agents(net, baseline, args, embedding_type='dense_embedding'):
 
     states = dict()
 
-    if embedding_type is 'dense_embedding':
+    if embedding_type == 'dense_embedding':
         states = {
         'global_in': {'shape': (10, 10, 52), 'type': 'float'},
         'local_in': {'shape': (5, 5, 52), 'type': 'float'},
@@ -16,7 +16,7 @@ def create_agents(net, baseline, args, embedding_type='dense_embedding'):
 
         'prev_action': {'shape': (17), 'type': 'float'}
     }
-    elif embedding_type is 'transformer':
+    elif embedding_type == 'transformer':
         states = {
             'global_in': {'shape': (10, 10), 'num_values': 4, 'type': 'int'},
             'local_in': {'shape': (5, 5), 'num_values': 4, 'type': 'int'},

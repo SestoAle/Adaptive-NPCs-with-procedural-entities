@@ -47,10 +47,10 @@ class UnityEnvWrapper(Environment):
 
         self.one_hot = False
 
-        if embedding_type is 'dense_embedding':
+        if embedding_type == 'dense_embedding':
             self.get_input_observation = self.get_input_observation_dense
             self.print_observation = self.print_observation_dense
-        elif embedding_type is 'transformer':
+        elif embedding_type == 'transformer':
             self.get_input_observation = self.get_input_observation_transformer
             self.print_observation = self.print_observation_transformer
             self.with_transformer = True
